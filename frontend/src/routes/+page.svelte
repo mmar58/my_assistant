@@ -154,6 +154,6 @@
     </div>
 
     <!-- Input Area -->
-    <ChatInput on:send={handleSend} disabled={isGenerating || models.length === 0} />
+    <ChatInput onsend={handleSend} disabled={isGenerating || models.length === 0} />
   </Card>
 </div>
