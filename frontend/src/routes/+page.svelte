@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, afterUpdate } from 'svelte';
+  import { onMount } from 'svelte';
   import ModelSelector from '$lib/components/ModelSelector.svelte';
   import ChatBubble from '$lib/components/ChatBubble.svelte';
   import ChatInput from '$lib/components/ChatInput.svelte';
@@ -11,11 +11,11 @@
     content: string;
   };
 
-  let models: any[] = [];
-  let selectedModel: string = "";
-  let messages: Message[] = [];
-  let isGenerating = false;
-  let scrollAreaElement: HTMLElement;
+  let models: any[] = $state([]);
+  let selectedModel: string = $state("");
+  let messages: Message[] = $state([]);
+  let isGenerating = $state(false);
+  let scrollAreaElement: HTMLElement | undefined = $state();
 
   onMount(async () => {
     try {
@@ -41,7 +41,8 @@
     }
   };
 
-  afterUpdate(() => {
+  $effect(() => {
+    messages;
     scrollToBottom();
   });
 
@@ -114,7 +115,7 @@
     <!-- Header -->
     <header class="flex items-center justify-between p-4 border-b bg-card/50">
       <div class="flex flex-col">
-        <h1 class="text-xl font-bold bg-gradient-to-r from-primary to-blue-500 bg-clip-text text-transparent">Antigravity Chat</h1>
+        <h1 class="text-xl font-bold bg-linear-to-r from-primary to-blue-500 bg-clip-text text-transparent">Antigravity Chat</h1>
         <p class="text-xs text-muted-foreground">Powered by Ollama</p>
       </div>
       

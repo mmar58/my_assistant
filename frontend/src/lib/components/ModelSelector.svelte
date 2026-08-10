@@ -1,28 +1,23 @@
 <script lang="ts">
   import * as Select from "$lib/components/ui/select";
   
-  export let models: any[] = [];
-  export let selectedModel: string = "";
-
-  let selectedValue = selectedModel 
-    ? { value: selectedModel, label: selectedModel } 
-    : undefined;
-
-  function handleSelect(item: { value: string, label: string } | undefined) {
-    if (item) {
-      selectedModel = item.value;
-    }
-  }
+  let {
+    models = $bindable([]),
+    selectedModel = $bindable("")
+  }: {
+    models?: any[];
+    selectedModel?: string;
+  } = $props();
 </script>
 
 <div class="w-[280px]">
-  <Select.Root selected={selectedValue} onSelectedChange={handleSelect}>
+  <Select.Root type="single" bind:value={selectedModel}>
     <Select.Trigger>
-      <Select.Value placeholder="Select a model" />
+      {selectedModel ? selectedModel : "Select a model"}
     </Select.Trigger>
     <Select.Content>
       <Select.Group>
-        <Select.Label>Ollama Models</Select.Label>
+        <Select.GroupHeading>Ollama Models</Select.GroupHeading>
         {#each models as model}
           <Select.Item value={model.name} label={model.name}>
             {model.name}

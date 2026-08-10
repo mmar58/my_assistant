@@ -1,6 +1,5 @@
 <script lang="ts">
-  export let role: 'user' | 'assistant';
-  export let content: string;
+  let { role, content }: { role: 'user' | 'assistant'; content: string; } = $props();
 </script>
 
 <div class={`flex w-full ${role === 'user' ? 'justify-end' : 'justify-start'} mb-4`}>

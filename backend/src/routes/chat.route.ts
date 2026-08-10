@@ -6,6 +6,7 @@ export async function chatRoutes(fastify: FastifyInstance) {
   fastify.get('/models', async (request, reply) => {
     try {
       const response = await ollama.list();
+      console.log('Ollama response', response)
       return response.models;
     } catch (error) {
       fastify.log.error(error);
@@ -20,10 +21,15 @@ export async function chatRoutes(fastify: FastifyInstance) {
       return reply.status(400).send({ error: 'Model and message are required' });
     }
 
+    // Tell Fastify we will handle the response manually via reply.raw
+    reply.hijack();
+
     // Set headers for Server-Sent Events (SSE)
     reply.raw.setHeader('Content-Type', 'text/event-stream');
     reply.raw.setHeader('Cache-Control', 'no-cache');
     reply.raw.setHeader('Connection', 'keep-alive');
+    // Ensure headers are sent immediately
+    reply.raw.flushHeaders();
 
     let fullResponse = '';
 
@@ -37,7 +43,7 @@ export async function chatRoutes(fastify: FastifyInstance) {
       for await (const chunk of stream) {
         const content = chunk.message.content;
         fullResponse += content;
-        
+
         // Write the chunk to the response stream
         reply.raw.write(`data: ${JSON.stringify({ content })}\n\n`);
       }
