@@ -1,6 +1,7 @@
 import { FastifyInstance } from 'fastify';
 import ollama from 'ollama';
 import { logResponse } from '../services/file.service.js';
+import { Readable } from 'stream';
 
 export async function chatRoutes(fastify: FastifyInstance) {
   fastify.get('/models', async (request, reply) => {
@@ -21,17 +22,9 @@ export async function chatRoutes(fastify: FastifyInstance) {
       return reply.status(400).send({ error: 'Model and message are required' });
     }
 
-    // Tell Fastify we will handle the response manually via reply.raw
-    reply.hijack();
-
-    // Set headers for Server-Sent Events (SSE)
-    reply.raw.setHeader('Content-Type', 'text/event-stream');
-    reply.raw.setHeader('Cache-Control', 'no-cache');
-    reply.raw.setHeader('Connection', 'keep-alive');
-    // Ensure headers are sent immediately
-    reply.raw.flushHeaders();
-
-    let fullResponse = '';
+    reply.header('Content-Type', 'text/event-stream');
+    reply.header('Cache-Control', 'no-cache');
+    reply.header('Connection', 'keep-alive');
 
     try {
       const stream = await ollama.chat({
@@ -40,23 +33,26 @@ export async function chatRoutes(fastify: FastifyInstance) {
         stream: true,
       });
 
-      for await (const chunk of stream) {
-        const content = chunk.message.content;
-        fullResponse += content;
-
-        // Write the chunk to the response stream
-        reply.raw.write(`data: ${JSON.stringify({ content })}\n\n`);
+      async function* generate() {
+        let fullResponse = '';
+        try {
+          for await (const chunk of stream) {
+            const content = chunk.message.content;
+            fullResponse += content;
+            yield `data: ${JSON.stringify({ content })}\n\n`;
+          }
+          logResponse(model, fullResponse);
+          yield 'data: [DONE]\n\n';
+        } catch (error) {
+          fastify.log.error(error);
+          yield `data: ${JSON.stringify({ error: 'An error occurred during chat' })}\n\n`;
+        }
       }
 
-      // Once done, log the response and end stream
-      logResponse(model, fullResponse);
-      reply.raw.write('data: [DONE]\n\n');
-      reply.raw.end();
-
+      return reply.send(Readable.from(generate()));
     } catch (error) {
       fastify.log.error(error);
-      reply.raw.write(`data: ${JSON.stringify({ error: 'An error occurred during chat' })}\n\n`);
-      reply.raw.end();
+      return reply.status(500).send({ error: 'Failed to initialize chat stream' });
     }
   });
 }
