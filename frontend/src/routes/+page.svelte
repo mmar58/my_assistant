@@ -7,8 +7,9 @@
   import { Card } from '$lib/components/ui/card';
 
   type Message = {
-    role: 'user' | 'assistant';
+    role: 'user' | 'assistant' | 'tool';
     content: string;
+    status?: string;
   };
 
   let models: any[] = $state([]);
@@ -89,7 +90,15 @@
               }
               try {
                 const parsed = JSON.parse(data);
-                if (parsed.content) {
+                if (parsed.type === 'status') {
+                  messages[assistantMessageIndex].status = parsed.message;
+                  messages = [...messages];
+                } else if (parsed.type === 'content' && parsed.content) {
+                  messages[assistantMessageIndex].status = undefined; // clear status
+                  messages[assistantMessageIndex].content += parsed.content;
+                  messages = [...messages];
+                } else if (parsed.content) {
+                  // Fallback for older format if ever occurs
                   messages[assistantMessageIndex].content += parsed.content;
                   messages = [...messages];
                 }

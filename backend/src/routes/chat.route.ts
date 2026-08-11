@@ -27,25 +27,96 @@ export async function chatRoutes(fastify: FastifyInstance) {
     reply.header('Connection', 'keep-alive');
 
     try {
-      const stream = await ollama.chat({
-        model,
-        messages: [{ role: 'user', content: message }],
-        stream: true,
-      });
-
       async function* generate() {
-        let fullResponse = '';
+        let tools = [];
         try {
-          for await (const chunk of stream) {
-            const content = chunk.message.content;
-            fullResponse += content;
-            yield `data: ${JSON.stringify({ content })}\n\n`;
+          const toolsRes = await fetch('http://127.0.0.1:3001/api/tools');
+          if (toolsRes.ok) {
+            const data = await toolsRes.json() as any;
+            tools = data.tools || [];
           }
-          logResponse(model, fullResponse);
-          yield 'data: [DONE]\n\n';
-        } catch (error) {
-          fastify.log.error(error);
-          yield `data: ${JSON.stringify({ error: 'An error occurred during chat' })}\n\n`;
+        } catch (e) {
+          fastify.log.error('Failed to fetch tools from microservice');
+        }
+
+        let messages: any[] = [{ role: 'user', content: message }];
+        let isDone = false;
+
+        // Check if this model supports tool use
+        let modelSupportTools = false;
+        try {
+          const modelInfo = await ollama.show({ model });
+          modelSupportTools = (modelInfo as any).capabilities?.includes('tools') ?? false;
+          if (!modelSupportTools) {
+            fastify.log.info(`Model ${model} does not support tools, skipping tool injection.`);
+          }
+        } catch (e) {
+          fastify.log.warn('Could not determine model capabilities, proceeding without tools');
+        }
+
+        while (!isDone) {
+          const stream = await ollama.chat({
+            model,
+            messages,
+            tools: modelSupportTools && tools.length > 0 ? tools : undefined,
+            stream: true,
+          });
+
+          let fullResponse = '';
+          let toolCalls: any[] = [];
+
+          for await (const chunk of stream) {
+            if (chunk.message.tool_calls && chunk.message.tool_calls.length > 0) {
+              toolCalls = chunk.message.tool_calls;
+              // We don't yield here yet, we will yield below so we can include arguments
+            } else if (chunk.message.content) {
+              const content = chunk.message.content;
+              fullResponse += content;
+              yield `data: ${JSON.stringify({ type: 'content', content })}\n\n`;
+            }
+          }
+
+          if (toolCalls.length > 0) {
+            messages.push({
+              role: 'assistant',
+              content: fullResponse,
+              tool_calls: toolCalls
+            });
+
+            for (const tc of toolCalls) {
+              // Yield the tool call as content so the user sees it inline
+              yield `data: ${JSON.stringify({ type: 'content', content: `\n\n> *Calling tool: ${tc.function.name}* \n> *Arguments: ${JSON.stringify(tc.function.arguments)}*\n` })}\n\n`;
+              
+              try {
+                const execRes = await fetch('http://127.0.0.1:3001/api/tools/execute', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ name: tc.function.name, arguments: tc.function.arguments })
+                });
+                
+                const execData = await execRes.json();
+                
+                messages.push({
+                  role: 'tool',
+                  content: JSON.stringify(execData),
+                });
+
+                // Yield the tool result as content
+                yield `data: ${JSON.stringify({ type: 'content', content: `> *Result: ${JSON.stringify(execData)}*\n\n` })}\n\n`;
+              } catch (e) {
+                messages.push({
+                  role: 'tool',
+                  content: JSON.stringify({ error: 'Tool execution failed' })
+                });
+                yield `data: ${JSON.stringify({ type: 'content', content: `> *Result: Failed to execute tool*\n\n` })}\n\n`;
+              }
+            }
+            // Loop restarts to let model process tool results
+          } else {
+            logResponse(model, fullResponse);
+            yield 'data: [DONE]\n\n';
+            isDone = true;
+          }
         }
       }
 
