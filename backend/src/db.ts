@@ -17,6 +17,14 @@ pool.on('error', (err) => {
   console.error('Unexpected PostgreSQL pool error', err);
 });
 
+pool.on('connect', async (client) => {
+  try {
+    await pgvector.registerTypes(client);
+  } catch (err) {
+    console.error('Failed to register pgvector types:', err);
+  }
+});
+
 /** Run the DB migration SQL on startup */
 export async function runMigrations(): Promise<void> {
   const { readFile } = await import('fs/promises');
@@ -27,8 +35,7 @@ export async function runMigrations(): Promise<void> {
   const sql = await readFile(join(__dirname, '../migrations/001_init.sql'), 'utf-8');
   await pool.query(sql);
   
-  // Register vector types after the extension has definitely been created
-  await pgvector.registerTypes(pool);
+  // pgvector types are registered via pool.on('connect')
   
   console.log('✓ Database migrations applied');
 }
