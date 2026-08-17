@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
-    "start": "node dist/server.js"
+    "start": "node dist/server.js",
+    "migrate": "tsx src/migrate.ts"
   },
   "keywords": [],
   "author": "",
@@ -16,10 +17,13 @@
     "@fastify/cors": "^11.3.0",
     "dotenv": "^17.4.2",
     "fastify": "^5.11.2",
-    "ollama": "^0.6.3"
+    "ollama": "^0.6.3",
+    "pg": "^8.23.0",
+    "pgvector": "^0.3.0"
   },
   "devDependencies": {
     "@types/node": "^26.1.2",
+    "@types/pg": "^8.21.0",
     "tsx": "^4.23.5",
     "typescript": "^7.0.2"
   }
