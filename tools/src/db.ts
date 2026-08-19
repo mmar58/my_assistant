@@ -3,15 +3,24 @@ import pgvector from 'pgvector/pg';
 
 const { Pool } = pg;
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-pgvector.registerTypes(pg.types as any);
-
 export const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
+  host: process.env.DB_HOST,
+  port: parseInt(process.env.DB_PORT || '5432'),
+  database: process.env.DB_NAME,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
 });
 
 pool.on('error', (err) => {
   console.error('Unexpected PostgreSQL pool error', err);
+});
+
+pool.on('connect', async (client) => {
+  try {
+    await pgvector.registerTypes(client);
+  } catch (err) {
+    console.error('Failed to register pgvector types:', err);
+  }
 });
 
 /** Get an embedding vector for a text string using Ollama */
