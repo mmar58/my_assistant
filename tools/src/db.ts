@@ -38,3 +38,28 @@ export async function getEmbedding(text: string, model: string): Promise<number[
     return null;
   }
 }
+
+// ── Memory Management ────────────────────────────────────────────────────────
+
+export async function saveMemory(content: string, embedding: number[]): Promise<void> {
+  const vectorStr = `[${embedding.join(',')}]`;
+  await pool.query(
+    `INSERT INTO memories (content, embedding) VALUES ($1, $2::vector)`,
+    [content, vectorStr]
+  );
+}
+
+export async function searchMemories(
+  queryEmbedding: number[],
+  limit = 5
+): Promise<any[]> {
+  const vectorStr = `[${queryEmbedding.join(',')}]`;
+  const result = await pool.query(
+    `SELECT content, embedding <=> $1::vector AS distance
+     FROM memories
+     ORDER BY distance ASC
+     LIMIT $2`,
+    [vectorStr, limit]
+  );
+  return result.rows;
+}

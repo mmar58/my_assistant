@@ -27,17 +27,21 @@ pool.on('connect', async (client) => {
 
 /** Run the DB migration SQL on startup */
 export async function runMigrations(): Promise<void> {
-  const { readFile } = await import('fs/promises');
+  const { readFile, readdir } = await import('fs/promises');
   const { join, dirname } = await import('path');
   const { fileURLToPath } = await import('url');
 
   const __dirname = dirname(fileURLToPath(import.meta.url));
-  const sql = await readFile(join(__dirname, '../migrations/001_init.sql'), 'utf-8');
-  await pool.query(sql);
+  const migrationsDir = join(__dirname, '../migrations');
   
-  // pgvector types are registered via pool.on('connect')
-  
-  console.log('✓ Database migrations applied');
+  const files = await readdir(migrationsDir);
+  const sqlFiles = files.filter(f => f.endsWith('.sql')).sort();
+
+  for (const file of sqlFiles) {
+    const sql = await readFile(join(migrationsDir, file), 'utf-8');
+    await pool.query(sql);
+    console.log(`✓ Applied migration: ${file}`);
+  }
 }
 
 /** Get an embedding vector for a text string using Ollama */
@@ -138,6 +142,69 @@ export async function upsertToolPermission(
 export async function getAllToolPermissions(): Promise<any[]> {
   const result = await pool.query(
     `SELECT tool_name, policy, whitelisted_dirs, whitelisted_commands FROM tool_permissions`
+  );
+  return result.rows;
+}
+
+// ── Chat and Message Management ──────────────────────────────────────────────
+
+export async function createChat(title: string, model: string): Promise<string> {
+  const result = await pool.query(
+    `INSERT INTO chats (title, last_model) VALUES ($1, $2) RETURNING id`,
+    [title, model]
+  );
+  return result.rows[0].id;
+}
+
+export async function getChats(): Promise<any[]> {
+  const result = await pool.query(
+    `SELECT id, title, last_model, created_at, updated_at FROM chats ORDER BY updated_at DESC`
+  );
+  return result.rows;
+}
+
+export async function getChat(id: string): Promise<any | null> {
+  const result = await pool.query(
+    `SELECT id, title, last_model, created_at, updated_at FROM chats WHERE id = $1`,
+    [id]
+  );
+  return result.rows[0] ?? null;
+}
+
+export async function updateChat(id: string, title?: string, last_model?: string): Promise<void> {
+  if (title && last_model) {
+    await pool.query(
+      `UPDATE chats SET title = $1, last_model = $2, updated_at = NOW() WHERE id = $3`,
+      [title, last_model, id]
+    );
+  } else if (title) {
+    await pool.query(`UPDATE chats SET title = $1, updated_at = NOW() WHERE id = $2`, [title, id]);
+  } else if (last_model) {
+    await pool.query(`UPDATE chats SET last_model = $1, updated_at = NOW() WHERE id = $2`, [last_model, id]);
+  }
+}
+
+export async function deleteChat(id: string): Promise<void> {
+  await pool.query(`DELETE FROM chats WHERE id = $1`, [id]);
+}
+
+export async function addMessage(
+  chatId: string,
+  role: string,
+  content: string,
+  toolCalls?: any[]
+): Promise<void> {
+  await pool.query(
+    `INSERT INTO messages (chat_id, role, content, tool_calls) VALUES ($1, $2, $3, $4::jsonb)`,
+    [chatId, role, content, toolCalls ? JSON.stringify(toolCalls) : null]
+  );
+  await pool.query(`UPDATE chats SET updated_at = NOW() WHERE id = $1`, [chatId]);
+}
+
+export async function getChatMessages(chatId: string): Promise<any[]> {
+  const result = await pool.query(
+    `SELECT id, role, content, tool_calls, created_at FROM messages WHERE chat_id = $1 ORDER BY created_at ASC`,
+    [chatId]
   );
   return result.rows;
 }

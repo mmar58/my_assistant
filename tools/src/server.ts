@@ -18,6 +18,7 @@ import { webTools } from './tool-modules/web.js';
 import { timeTools } from './tool-modules/time.js';
 import { searchTools } from './tool-modules/search.js';
 import { toolBuilderTools } from './tool-modules/tool_builder.js';
+import { memoryTools } from './tool-modules/memory.js';
 
 const fastify = Fastify({ logger: true });
 
@@ -147,6 +148,7 @@ const start = async () => {
       ...timeTools,
       ...searchTools,
       ...toolBuilderTools,
+      ...memoryTools,
     ]);
 
     // Load custom AI-created tools from DB

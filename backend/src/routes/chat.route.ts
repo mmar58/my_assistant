@@ -9,6 +9,13 @@ import {
   getAllToolSchemas,
   getToolPermission,
   upsertToolPermission,
+  createChat,
+  getChats,
+  getChat,
+  updateChat,
+  deleteChat,
+  addMessage,
+  getChatMessages,
 } from '../db.js';
 import { createPermissionRequest } from '../permission-store.js';
 
@@ -54,9 +61,53 @@ export async function chatRoutes(fastify: FastifyInstance) {
     }
   });
 
+  // ─── Chat Management ────────────────────────────────────────────────────────
+  fastify.get('/chats', async (request, reply) => {
+    try {
+      const chats = await getChats();
+      return chats;
+    } catch (error) {
+      fastify.log.error(error);
+      reply.status(500).send({ error: 'Failed to fetch chats' });
+    }
+  });
+
+  fastify.post('/chats', async (request, reply) => {
+    const { title, model } = request.body as { title: string; model: string };
+    try {
+      const id = await createChat(title || 'New Chat', model || 'llama3');
+      return { id };
+    } catch (error) {
+      fastify.log.error(error);
+      reply.status(500).send({ error: 'Failed to create chat' });
+    }
+  });
+
+  fastify.get('/chats/:id/messages', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    try {
+      const messages = await getChatMessages(id);
+      return messages;
+    } catch (error) {
+      fastify.log.error(error);
+      reply.status(500).send({ error: 'Failed to fetch messages' });
+    }
+  });
+
+  fastify.delete('/chats/:id', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    try {
+      await deleteChat(id);
+      return { success: true };
+    } catch (error) {
+      fastify.log.error(error);
+      reply.status(500).send({ error: 'Failed to delete chat' });
+    }
+  });
+
   // ─── Chat ───────────────────────────────────────────────────────────────────
   fastify.post('/chat', async (request, reply) => {
-    const { model, message } = request.body as { model: string; message: string };
+    let { model, message, chatId } = request.body as { model: string; message: string; chatId?: string };
 
     if (!model || !message) {
       return reply.status(400).send({ error: 'Model and message are required' });
@@ -117,8 +168,25 @@ export async function chatRoutes(fastify: FastifyInstance) {
         }
       }
 
-      // ── 4. Main LLM loop ──────────────────────────────────────────────────
-      const messages: any[] = [{ role: 'user', content: message }];
+      // ── 4. Load history and save user message ─────────────────────────────
+      let messages: any[] = [];
+      if (!chatId) {
+        chatId = await createChat('New Chat', model);
+        yield toolEvent({ event: 'chat_created', chatId });
+      } else {
+        await updateChat(chatId, undefined, model);
+        const history = await getChatMessages(chatId);
+        messages = history.map(h => ({
+          role: h.role,
+          content: h.content,
+          tool_calls: h.tool_calls
+        }));
+      }
+
+      await addMessage(chatId, 'user', message);
+      messages.push({ role: 'user', content: message });
+      
+      // ── 5. Main LLM loop ──────────────────────────────────────────────────
       let isDone = false;
       let iterationCount = 0;
       const MAX_ITERATIONS = 20;
@@ -154,6 +222,7 @@ export async function chatRoutes(fastify: FastifyInstance) {
             content: fullResponse,
             tool_calls: toolCalls,
           });
+          if (chatId) await addMessage(chatId, 'assistant', fullResponse, toolCalls);
 
           for (const tc of toolCalls) {
             const toolName = tc.function.name;
@@ -178,6 +247,7 @@ export async function chatRoutes(fastify: FastifyInstance) {
                 message: `Tool "${toolName}" is denied by policy.`,
               });
               messages.push({ role: 'tool', content: JSON.stringify({ error: `Tool "${toolName}" was denied by user policy.` }) });
+              if (chatId) await addMessage(chatId, 'tool', JSON.stringify({ error: `Tool "${toolName}" was denied by user policy.` }));
               continue;
             }
 
@@ -207,6 +277,7 @@ export async function chatRoutes(fastify: FastifyInstance) {
                   message: `You denied the use of "${toolName}".`,
                 });
                 messages.push({ role: 'tool', content: JSON.stringify({ error: `Tool "${toolName}" was denied by the user.` }) });
+                if (chatId) await addMessage(chatId, 'tool', JSON.stringify({ error: `Tool "${toolName}" was denied by the user.` }));
                 continue;
               }
 
@@ -250,6 +321,7 @@ export async function chatRoutes(fastify: FastifyInstance) {
               });
 
               messages.push({ role: 'tool', content: JSON.stringify(execData) });
+              if (chatId) await addMessage(chatId, 'tool', JSON.stringify(execData));
             } catch (e) {
               yield toolEvent({
                 event: 'tool_error',
@@ -257,11 +329,29 @@ export async function chatRoutes(fastify: FastifyInstance) {
                 message: `Tool "${toolName}" failed to execute.`,
               });
               messages.push({ role: 'tool', content: JSON.stringify({ error: 'Tool execution failed' }) });
+              if (chatId) await addMessage(chatId, 'tool', JSON.stringify({ error: 'Tool execution failed' }));
             }
           }
           // Loop back to let model process tool results
         } else {
-          // No tool calls — we're done
+          // No tool calls — save assistant response and we're done
+          if (chatId) await addMessage(chatId, 'assistant', fullResponse);
+          
+          // Auto-generate title if this is the first assistant response in a new chat
+          if (messages.length <= 3 && chatId) {
+            try {
+              const titleStream = await ollama.chat({
+                model,
+                messages: [
+                  { role: 'user', content: `Summarize this prompt in 3-5 words max for a chat title: ${message}` }
+                ]
+              });
+              const title = titleStream.message.content.trim().replace(/^["']|["']$/g, '');
+              await updateChat(chatId, title);
+              yield toolEvent({ event: 'chat_title_updated', chatId, title });
+            } catch (e) { /* ignore */ }
+          }
+          
           yield 'data: [DONE]\n\n';
           isDone = true;
         }

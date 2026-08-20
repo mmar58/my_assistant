@@ -26,6 +26,8 @@
   let models: any[] = $state([]);
   let selectedModel: string = $state('');
   let messages: Message[] = $state([]);
+  let chats: any[] = $state([]);
+  let selectedChatId: string | null = $state(null);
   let isGenerating = $state(false);
   let scrollAreaElement: HTMLElement | undefined = $state();
   let pendingPermission: PendingPermission | null = $state(null);
@@ -40,7 +42,42 @@
     } catch (e) {
       console.error('Failed to fetch models', e);
     }
+    loadChats();
   });
+
+  async function loadChats() {
+    try {
+      const res = await fetch(`${API}/chats`);
+      if (res.ok) chats = await res.json();
+    } catch (e) {
+      console.error('Failed to load chats', e);
+    }
+  }
+
+  async function selectChat(id: string) {
+    selectedChatId = id;
+    const chat = chats.find(c => c.id === id);
+    if (chat && chat.last_model) selectedModel = chat.last_model;
+
+    try {
+      const res = await fetch(`${API}/chats/${id}/messages`);
+      if (res.ok) {
+        const history = await res.json();
+        messages = history.map((m: any) => ({
+          role: m.role,
+          content: m.content,
+          toolEvents: []
+        }));
+      }
+    } catch (e) {
+      console.error('Failed to load messages', e);
+    }
+  }
+
+  function newChat() {
+    selectedChatId = null;
+    messages = [];
+  }
 
   const scrollToBottom = () => {
     if (scrollAreaElement) {
@@ -67,7 +104,7 @@
       const res = await fetch(`${API}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: selectedModel, message: userMessage }),
+        body: JSON.stringify({ model: selectedModel, message: userMessage, chatId: selectedChatId }),
       });
 
       if (!res.body) throw new Error('No response body');
@@ -105,7 +142,16 @@
               };
               messages = [...messages];
 
-            } else if (parsed.type === 'tool_event') {
+              } else if (parsed.type === 'tool_event') {
+                if (parsed.event === 'chat_created') {
+                  selectedChatId = parsed.chatId;
+                  loadChats();
+                  continue;
+                } else if (parsed.event === 'chat_title_updated') {
+                  loadChats();
+                  continue;
+                }
+
               const prev = messages[assistantIdx];
               const evts = [...(prev.toolEvents ?? [])];
 
@@ -159,8 +205,31 @@
   <title>AI Assistant</title>
 </svelte:head>
 
-<div class="h-screen w-full flex bg-background items-center justify-center p-4 sm:p-8">
-  <Card class="w-full max-w-4xl h-full flex flex-col shadow-2xl border border-border/50 rounded-xl overflow-hidden bg-card/80 backdrop-blur-xl">
+<div class="h-screen w-full flex bg-background p-4 sm:p-8 gap-4">
+  <!-- Sidebar -->
+  <Card class="w-64 hidden md:flex flex-col shadow-2xl border border-border/50 rounded-xl overflow-hidden bg-card/80 backdrop-blur-xl shrink-0">
+    <div class="p-4 border-b">
+      <button class="w-full bg-primary text-primary-foreground rounded-lg py-2 text-sm font-medium hover:bg-primary/90 transition-colors" onclick={newChat}>
+        + New Chat
+      </button>
+    </div>
+    <ScrollArea class="flex-1 p-2">
+      <div class="flex flex-col gap-1">
+        {#each chats as chat}
+          <button 
+            class="text-left px-3 py-2 rounded-lg text-sm transition-colors {selectedChatId === chat.id ? 'bg-muted font-medium' : 'hover:bg-muted/50 text-muted-foreground'}"
+            onclick={() => selectChat(chat.id)}
+          >
+            <div class="truncate">{chat.title}</div>
+            <div class="text-[10px] text-muted-foreground/60">{new Date(chat.updated_at).toLocaleDateString()}</div>
+          </button>
+        {/each}
+      </div>
+    </ScrollArea>
+  </Card>
+
+  <!-- Main Chat -->
+  <Card class="flex-1 h-full flex flex-col shadow-2xl border border-border/50 rounded-xl overflow-hidden bg-card/80 backdrop-blur-xl">
 
     <!-- Header -->
     <header class="flex items-center justify-between p-4 border-b bg-card/50 shrink-0">
