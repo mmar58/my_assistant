@@ -1,5 +1,5 @@
 import { ToolModule } from '../registry.js';
-import { getEmbedding, saveMemory, searchMemories } from '../db.js';
+import { getEmbedding, saveMemory, searchMemories, getSetting } from '../db.js';
 
 export const memoryTools: ToolModule[] = [
   {
@@ -20,7 +20,8 @@ export const memoryTools: ToolModule[] = [
     },
     execute: async (args, ctx) => {
       ctx.emit('status', `Saving memory: ${args.content}`);
-      const embedding = await getEmbedding(args.content, process.env.EMBEDDING_MODEL ?? 'nomic-embed-text');
+      const embeddingModel = (await getSetting('embedding_model')) ?? process.env.EMBEDDING_MODEL ?? 'nomic-embed-text';
+      const embedding = await getEmbedding(args.content, embeddingModel);
       if (!embedding) {
         return { success: false, error: 'Failed to generate embedding for the memory content.' };
       }
@@ -46,7 +47,8 @@ export const memoryTools: ToolModule[] = [
     },
     execute: async (args, ctx) => {
       ctx.emit('status', `Searching memory for: ${args.query}`);
-      const embedding = await getEmbedding(args.query, process.env.EMBEDDING_MODEL ?? 'nomic-embed-text');
+      const embeddingModel = (await getSetting('embedding_model')) ?? process.env.EMBEDDING_MODEL ?? 'nomic-embed-text';
+      const embedding = await getEmbedding(args.query, embeddingModel);
       if (!embedding) {
         return { success: false, error: 'Failed to generate embedding for the search query.' };
       }

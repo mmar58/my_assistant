@@ -39,6 +39,17 @@ export async function getEmbedding(text: string, model: string): Promise<number[
   }
 }
 
+// ── Settings ───────────────────────────────────────────────────────────────────
+
+export async function getSetting(key: string): Promise<string | null> {
+  try {
+    const result = await pool.query('SELECT value FROM settings WHERE key = $1', [key]);
+    return result.rows[0]?.value ?? null;
+  } catch {
+    return null;
+  }
+}
+
 // ── Memory Management ────────────────────────────────────────────────────────
 
 export async function saveMemory(content: string, embedding: number[]): Promise<void> {

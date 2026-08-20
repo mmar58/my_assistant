@@ -156,14 +156,16 @@
           <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
           Copy
         </button>
-        <div class="absolute top-full left-0 mt-1 hidden group-hover/copy:flex flex-col bg-popover text-popover-foreground shadow-md border rounded-md overflow-hidden text-[10px] w-32 z-50">
-          <button class="px-2 py-1.5 text-left hover:bg-muted" onclick={copyFull}>Copy Full Message</button>
-          {#if toolEvents.length > 0}
-            <button class="px-2 py-1.5 text-left hover:bg-muted border-t" onclick={copyToolOutput}>Copy Tool Output</button>
-          {/if}
-          {#if content}
-            <button class="px-2 py-1.5 text-left hover:bg-muted border-t" onclick={copyLLMResponse}>Copy Text Only</button>
-          {/if}
+        <div class="absolute top-full left-0 pt-1 hidden group-hover/copy:flex flex-col w-32 z-50">
+          <div class="flex flex-col bg-popover text-popover-foreground shadow-md border rounded-md overflow-hidden text-[10px]">
+            <button class="px-2 py-1.5 text-left hover:bg-muted" onclick={copyFull}>Copy Full Message</button>
+            {#if toolEvents.length > 0}
+              <button class="px-2 py-1.5 text-left hover:bg-muted border-t" onclick={copyToolOutput}>Copy Tool Output</button>
+            {/if}
+            {#if content}
+              <button class="px-2 py-1.5 text-left hover:bg-muted border-t" onclick={copyLLMResponse}>Copy Text Only</button>
+            {/if}
+          </div>
         </div>
       </div>
 
