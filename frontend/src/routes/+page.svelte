@@ -112,16 +112,22 @@
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let done = false;
+      let buffer = '';
 
       while (!done) {
         const { value, done: readerDone } = await reader.read();
-        done = readerDone;
+        if (readerDone) {
+          done = true;
+          break;
+        }
         if (!value) continue;
 
-        const chunk = decoder.decode(value, { stream: true });
-        const lines = chunk.split('\n');
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || ''; // Keep the last incomplete line in the buffer
 
         for (const line of lines) {
+          if (!line.trim()) continue;
           if (!line.startsWith('data: ')) continue;
           const raw = line.slice(6);
           if (raw === '[DONE]') { done = true; break; }

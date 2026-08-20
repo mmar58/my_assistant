@@ -337,23 +337,24 @@ export async function chatRoutes(fastify: FastifyInstance) {
           // No tool calls — save assistant response and we're done
           if (chatId) await addMessage(chatId, 'assistant', fullResponse);
           
-          // Auto-generate title if this is the first assistant response in a new chat
-          if (messages.length <= 3 && chatId) {
-            try {
-              const titleStream = await ollama.chat({
-                model,
-                messages: [
-                  { role: 'user', content: `Summarize this prompt in 3-5 words max for a chat title: ${message}` }
-                ]
-              });
-              const title = titleStream.message.content.trim().replace(/^["']|["']$/g, '');
-              await updateChat(chatId, title);
-              yield toolEvent({ event: 'chat_title_updated', chatId, title });
-            } catch (e) { /* ignore */ }
-          }
-          
           yield 'data: [DONE]\n\n';
           isDone = true;
+
+          // Auto-generate title asynchronously (don't block)
+          if (!request.body.chatId && chatId) {
+            ollama.chat({
+              model,
+              messages: [
+                { role: 'user', content: `Summarize this prompt in 3-5 words max for a chat title: ${message}` }
+              ]
+            }).then(async (titleStream) => {
+              const title = titleStream.message.content.trim().replace(/^["']|["']$/g, '');
+              await updateChat(chatId as string, title);
+              // Since the stream might be closed, we can't yield to it. 
+              // The frontend will just see the new title when it reloads chats, 
+              // but we can't push it via this closed stream anymore.
+            }).catch(() => {});
+          }
         }
       }
 
