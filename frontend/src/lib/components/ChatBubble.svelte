@@ -1,8 +1,13 @@
 <script lang="ts">
   import { marked } from 'marked';
+  import { addToast } from '$lib/stores/toast';
 
   function copyToClipboard(text: string) {
-    navigator.clipboard.writeText(text);
+    navigator.clipboard.writeText(text).then(() => {
+      addToast('Copied to clipboard!', 'success');
+    }).catch(() => {
+      addToast('Failed to copy', 'error');
+    });
   }
 
   function copyFull() {
@@ -37,11 +42,17 @@
     content,
     status,
     toolEvents = [],
+    promptEvalCount,
+    evalCount,
+    modelContextLength = 8192,
   }: {
     role: 'user' | 'assistant' | 'tool';
     content: string;
     status?: string;
     toolEvents?: any[];
+    promptEvalCount?: number;
+    evalCount?: number;
+    modelContextLength?: number;
   } = $props();
 
   function renderMarkdown(text: string): string {
@@ -144,6 +155,22 @@
           <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
         </svg>
         <span class="animate-pulse">{status}</span>
+      </div>
+    {/if}
+
+    <!-- Context Usage Progress -->
+    {#if role === 'assistant' && (promptEvalCount || evalCount)}
+      {@const totalTokens = (promptEvalCount || 0) + (evalCount || 0)}
+      {@const pct = Math.min(100, Math.round((totalTokens / modelContextLength) * 100))}
+      <div class="mt-2 pt-2 border-t border-border/20 group/context relative">
+        <div class="h-1 w-full bg-black/10 dark:bg-white/10 rounded-full overflow-hidden">
+          <div class="h-full bg-primary transition-all duration-500" style="width: {pct}%"></div>
+        </div>
+        <div class="absolute bottom-full mb-1 left-1/2 -translate-x-1/2 opacity-0 group-hover/context:opacity-100 transition-opacity bg-popover text-popover-foreground text-[10px] px-2 py-1 rounded shadow-md border whitespace-nowrap pointer-events-none z-10 flex flex-col items-center">
+          <span class="font-semibold">{pct}% Context Used</span>
+          <span class="opacity-70">Prompt: {promptEvalCount || 0} • Response: {evalCount || 0}</span>
+          <span class="opacity-70">Total: {totalTokens} / {modelContextLength} limits</span>
+        </div>
       </div>
     {/if}
 

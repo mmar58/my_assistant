@@ -158,14 +158,14 @@ export async function createChat(title: string, model: string): Promise<string> 
 
 export async function getChats(): Promise<any[]> {
   const result = await pool.query(
-    `SELECT id, title, last_model, created_at, updated_at FROM chats ORDER BY updated_at DESC`
+    `SELECT id, title, last_model, summary, use_summary, created_at, updated_at FROM chats ORDER BY updated_at DESC`
   );
   return result.rows;
 }
 
 export async function getChat(id: string): Promise<any | null> {
   const result = await pool.query(
-    `SELECT id, title, last_model, created_at, updated_at FROM chats WHERE id = $1`,
+    `SELECT id, title, last_model, summary, use_summary, created_at, updated_at FROM chats WHERE id = $1`,
     [id]
   );
   return result.rows[0] ?? null;
@@ -184,6 +184,14 @@ export async function updateChat(id: string, title?: string, last_model?: string
   }
 }
 
+export async function updateChatSummary(id: string, summary: string): Promise<void> {
+  await pool.query(`UPDATE chats SET summary = $1, updated_at = NOW() WHERE id = $2`, [summary, id]);
+}
+
+export async function toggleChatSummaryMode(id: string, useSummary: boolean): Promise<void> {
+  await pool.query(`UPDATE chats SET use_summary = $1, updated_at = NOW() WHERE id = $2`, [useSummary, id]);
+}
+
 export async function deleteChat(id: string): Promise<void> {
   await pool.query(`DELETE FROM chats WHERE id = $1`, [id]);
 }
@@ -192,18 +200,20 @@ export async function addMessage(
   chatId: string,
   role: string,
   content: string,
-  toolCalls?: any[]
+  toolCalls?: any[],
+  promptEvalCount?: number,
+  evalCount?: number
 ): Promise<void> {
   await pool.query(
-    `INSERT INTO messages (chat_id, role, content, tool_calls) VALUES ($1, $2, $3, $4::jsonb)`,
-    [chatId, role, content, toolCalls ? JSON.stringify(toolCalls) : null]
+    `INSERT INTO messages (chat_id, role, content, tool_calls, prompt_eval_count, eval_count) VALUES ($1, $2, $3, $4::jsonb, $5, $6)`,
+    [chatId, role, content, toolCalls ? JSON.stringify(toolCalls) : null, promptEvalCount ?? null, evalCount ?? null]
   );
   await pool.query(`UPDATE chats SET updated_at = NOW() WHERE id = $1`, [chatId]);
 }
 
 export async function getChatMessages(chatId: string): Promise<any[]> {
   const result = await pool.query(
-    `SELECT id, role, content, tool_calls, created_at FROM messages WHERE chat_id = $1 ORDER BY created_at ASC`,
+    `SELECT id, role, content, tool_calls, prompt_eval_count, eval_count, created_at FROM messages WHERE chat_id = $1 ORDER BY created_at ASC`,
     [chatId]
   );
   return result.rows;

@@ -16,6 +16,8 @@ import {
   deleteChat,
   addMessage,
   getChatMessages,
+  updateChatSummary,
+  toggleChatSummaryMode,
 } from '../db.js';
 import { createPermissionRequest } from '../permission-store.js';
 
@@ -105,6 +107,78 @@ export async function chatRoutes(fastify: FastifyInstance) {
     }
   });
 
+  fastify.put('/chats/:id', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const { title } = request.body as { title: string };
+    try {
+      await updateChat(id, title);
+      return { success: true };
+    } catch (error) {
+      fastify.log.error(error);
+      reply.status(500).send({ error: 'Failed to update chat' });
+    }
+  });
+
+  fastify.post('/chats/:id/auto-rename', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    try {
+      const chat = await getChat(id);
+      if (!chat) return reply.status(404).send({ error: 'Chat not found' });
+      const history = await getChatMessages(id);
+      // Grab up to last 10 messages for context
+      const recent = history.slice(-10).map(h => `${h.role}: ${h.content}`).join('\n');
+      const response = await ollama.chat({
+        model: chat.last_model || 'llama3',
+        messages: [
+          { role: 'user', content: `Based on this conversation, generate a 3-5 word title for the chat. Reply ONLY with the title. Do not use quotes.\n\n${recent}` }
+        ]
+      });
+      const title = response.message.content.trim().replace(/^["']|["']$/g, '');
+      await updateChat(id, title);
+      return { success: true, title };
+    } catch (error) {
+      fastify.log.error(error);
+      reply.status(500).send({ error: 'Failed to auto-rename chat' });
+    }
+  });
+
+  fastify.post('/chats/:id/summarize', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    try {
+      const chat = await getChat(id);
+      if (!chat) return reply.status(404).send({ error: 'Chat not found' });
+      const history = await getChatMessages(id);
+      const fullText = history.map(h => `${h.role}: ${h.content}`).join('\n');
+      
+      const response = await ollama.chat({
+        model: chat.last_model || 'llama3',
+        messages: [
+          { role: 'system', content: 'You are an AI assistant helping to compress chat context. Summarize the following conversation comprehensively. Capture all key facts, user preferences, conclusions, and important context so the AI can continue the conversation effectively without losing track of what happened.' },
+          { role: 'user', content: fullText }
+        ]
+      });
+      const summary = response.message.content.trim();
+      await updateChatSummary(id, summary);
+      
+      return { success: true, summary };
+    } catch (error) {
+      fastify.log.error(error);
+      reply.status(500).send({ error: 'Failed to summarize chat' });
+    }
+  });
+
+  fastify.post('/chats/:id/toggle-summary', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const { use_summary } = request.body as { use_summary: boolean };
+    try {
+      await toggleChatSummaryMode(id, use_summary);
+      return { success: true };
+    } catch (error) {
+      fastify.log.error(error);
+      reply.status(500).send({ error: 'Failed to toggle summary mode' });
+    }
+  });
+
   // ─── Chat ───────────────────────────────────────────────────────────────────
   fastify.post('/chat', async (request, reply) => {
     let { model, message, chatId } = request.body as { model: string; message: string; chatId?: string };
@@ -175,12 +249,16 @@ export async function chatRoutes(fastify: FastifyInstance) {
         yield toolEvent({ event: 'chat_created', chatId });
       } else {
         await updateChat(chatId, undefined, model);
-        const history = await getChatMessages(chatId);
-        messages = history.map(h => ({
-          role: h.role,
-          content: h.content,
-          tool_calls: h.tool_calls
-        }));
+        const chat = await getChat(chatId);
+        
+        if (chat?.use_summary && chat.summary) {
+          messages.push({ role: 'system', content: `[Conversation History Summary]: ${chat.summary}` });
+        } else {
+          const history = await getChatMessages(chatId);
+          for (const h of history) {
+            messages.push({ role: h.role, content: h.content, tool_calls: h.tool_calls });
+          }
+        }
       }
 
       await addMessage(chatId, 'user', message);
@@ -206,7 +284,13 @@ export async function chatRoutes(fastify: FastifyInstance) {
         let fullResponse = '';
         let toolCalls: any[] = [];
 
+        let promptEvalCount: number | undefined;
+        let evalCount: number | undefined;
+
         for await (const chunk of stream) {
+          if ((chunk as any).prompt_eval_count) promptEvalCount = (chunk as any).prompt_eval_count;
+          if ((chunk as any).eval_count) evalCount = (chunk as any).eval_count;
+
           if (chunk.message.tool_calls && chunk.message.tool_calls.length > 0) {
             toolCalls = chunk.message.tool_calls;
           } else if (chunk.message.content) {
@@ -222,7 +306,11 @@ export async function chatRoutes(fastify: FastifyInstance) {
             content: fullResponse,
             tool_calls: toolCalls,
           });
-          if (chatId) await addMessage(chatId, 'assistant', fullResponse, toolCalls);
+          if (chatId) await addMessage(chatId, 'assistant', fullResponse, toolCalls, promptEvalCount, evalCount);
+
+          if (promptEvalCount || evalCount) {
+            yield `data: ${JSON.stringify({ type: 'context_usage', prompt: promptEvalCount, eval: evalCount })}\n\n`;
+          }
 
           for (const tc of toolCalls) {
             const toolName = tc.function.name;
@@ -335,8 +423,11 @@ export async function chatRoutes(fastify: FastifyInstance) {
           // Loop back to let model process tool results
         } else {
           // No tool calls — save assistant response and we're done
-          if (chatId) await addMessage(chatId, 'assistant', fullResponse);
+          if (chatId) await addMessage(chatId, 'assistant', fullResponse, undefined, promptEvalCount, evalCount);
           
+          if (promptEvalCount || evalCount) {
+            yield `data: ${JSON.stringify({ type: 'context_usage', prompt: promptEvalCount, eval: evalCount })}\n\n`;
+          }
           yield 'data: [DONE]\n\n';
           isDone = true;
 

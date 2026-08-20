@@ -10,10 +10,12 @@
   const API = 'http://localhost:3000/api';
 
   type Message = {
-    role: 'user' | 'assistant' | 'tool';
+    role: 'user' | 'assistant' | 'tool' | 'system';
     content: string;
     status?: string;
     toolEvents?: any[];
+    promptEvalCount?: number;
+    evalCount?: number;
   };
 
   type PendingPermission = {
@@ -31,6 +33,15 @@
   let isGenerating = $state(false);
   let scrollAreaElement: HTMLElement | undefined = $state();
   let pendingPermission: PendingPermission | null = $state(null);
+  
+  // Advanced features state
+  let rightSidebarOpen = $state(false);
+  let summaryText = $state('');
+  let isSummarizing = $state(false);
+  let activeMenuId = $state<string | null>(null); // For sidebar dropdowns
+
+  let currentChat = $derived(chats.find(c => c.id === selectedChatId));
+  let contextLength = $derived(models.find(m => m.name === selectedModel)?.details?.context_length ?? 8192);
 
   onMount(async () => {
     try {
@@ -66,8 +77,13 @@
         messages = history.map((m: any) => ({
           role: m.role,
           content: m.content,
-          toolEvents: []
+          toolEvents: m.tool_calls || [],
+          promptEvalCount: m.prompt_eval_count,
+          evalCount: m.eval_count
         }));
+        if (currentChat?.use_summary) {
+           // We might just show it via the UI, or the backend already sent it as the first message
+        }
       }
     } catch (e) {
       console.error('Failed to load messages', e);
@@ -77,6 +93,7 @@
   function newChat() {
     selectedChatId = null;
     messages = [];
+    rightSidebarOpen = false;
   }
 
   const scrollToBottom = () => {
@@ -89,6 +106,18 @@
   $effect(() => {
     messages;
     scrollToBottom();
+  });
+
+  // Handle clicks outside dropdown menus
+  function handleWindowClick(e: MouseEvent) {
+    if (!(e.target as HTMLElement).closest('.chat-menu-container')) {
+      activeMenuId = null;
+    }
+  }
+
+  onMount(() => {
+    window.addEventListener('click', handleWindowClick);
+    return () => window.removeEventListener('click', handleWindowClick);
   });
 
   async function handleSend(event: CustomEvent<{ message: string }>) {
@@ -148,6 +177,11 @@
               };
               messages = [...messages];
 
+              } else if (parsed.type === 'context_usage') {
+                const prev = messages[assistantIdx];
+                messages[assistantIdx] = { ...prev, promptEvalCount: parsed.prompt, evalCount: parsed.eval };
+                messages = [...messages];
+
               } else if (parsed.type === 'tool_event') {
                 if (parsed.event === 'chat_created') {
                   selectedChatId = parsed.chatId;
@@ -205,6 +239,66 @@
   function handlePermissionResponse(result: 'approve_once' | 'approve_always' | 'deny') {
     pendingPermission = null;
   }
+
+  async function renameChat(id: string) {
+    activeMenuId = null;
+    const chat = chats.find(c => c.id === id);
+    const title = prompt('Enter new chat title:', chat?.title);
+    if (title) {
+      await fetch(`${API}/chats/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title })
+      });
+      loadChats();
+    }
+  }
+
+  async function autoRenameChat(id: string) {
+    activeMenuId = null;
+    try {
+      await fetch(`${API}/chats/${id}/auto-rename`, { method: 'POST' });
+      loadChats();
+    } catch {}
+  }
+
+  async function deleteChat(id: string) {
+    activeMenuId = null;
+    if (confirm('Are you sure you want to delete this chat?')) {
+      await fetch(`${API}/chats/${id}`, { method: 'DELETE' });
+      if (selectedChatId === id) newChat();
+      loadChats();
+    }
+  }
+
+  async function summarizeChat(id: string) {
+    activeMenuId = null;
+    if (selectedChatId !== id) await selectChat(id);
+    rightSidebarOpen = true;
+    isSummarizing = true;
+    try {
+      const res = await fetch(`${API}/chats/${id}/summarize`, { method: 'POST' });
+      if (res.ok) {
+        const data = await res.json();
+        summaryText = data.summary;
+        loadChats(); // Reload to get updated chat.summary
+      }
+    } finally {
+      isSummarizing = false;
+    }
+  }
+
+  async function toggleSummaryMode() {
+    if (!currentChat) return;
+    const newMode = !currentChat.use_summary;
+    await fetch(`${API}/chats/${currentChat.id}/toggle-summary`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ use_summary: newMode })
+    });
+    await loadChats();
+    await selectChat(currentChat.id); // Reload messages
+  }
 </script>
 
 <svelte:head>
@@ -222,13 +316,26 @@
     <ScrollArea class="flex-1 p-2">
       <div class="flex flex-col gap-1">
         {#each chats as chat}
-          <button 
-            class="text-left px-3 py-2 rounded-lg text-sm transition-colors {selectedChatId === chat.id ? 'bg-muted font-medium' : 'hover:bg-muted/50 text-muted-foreground'}"
-            onclick={() => selectChat(chat.id)}
-          >
-            <div class="truncate">{chat.title}</div>
-            <div class="text-[10px] text-muted-foreground/60">{new Date(chat.updated_at).toLocaleDateString()}</div>
-          </button>
+          <div class="relative chat-menu-container">
+            <button 
+              class="w-full text-left px-3 py-2 rounded-lg text-sm transition-colors pr-8 {selectedChatId === chat.id ? 'bg-muted font-medium' : 'hover:bg-muted/50 text-muted-foreground'}"
+              onclick={() => selectChat(chat.id)}
+            >
+              <div class="truncate">{chat.title}</div>
+              <div class="text-[10px] text-muted-foreground/60">{new Date(chat.updated_at).toLocaleDateString()}</div>
+            </button>
+            <button class="absolute right-2 top-2 p-1 text-muted-foreground hover:text-foreground opacity-50 hover:opacity-100" onclick={() => activeMenuId = activeMenuId === chat.id ? null : chat.id}>
+              ⋮
+            </button>
+            {#if activeMenuId === chat.id}
+              <div class="absolute top-8 right-2 w-40 bg-popover text-popover-foreground rounded-lg shadow-xl border overflow-hidden z-50 text-sm">
+                <button class="w-full text-left px-3 py-2 hover:bg-muted" onclick={() => renameChat(chat.id)}>Rename</button>
+                <button class="w-full text-left px-3 py-2 hover:bg-muted flex items-center justify-between" onclick={() => autoRenameChat(chat.id)}>Auto-Rename <span class="text-[10px] bg-primary/20 text-primary px-1 rounded font-bold tracking-wider">AI</span></button>
+                <button class="w-full text-left px-3 py-2 hover:bg-muted" onclick={() => summarizeChat(chat.id)}>Summarize</button>
+                <button class="w-full text-left px-3 py-2 hover:bg-red-500/10 text-red-500 border-t" onclick={() => deleteChat(chat.id)}>Delete</button>
+              </div>
+            {/if}
+          </div>
         {/each}
       </div>
     </ScrollArea>
@@ -287,6 +394,9 @@
                 content={msg.content}
                 status={msg.status}
                 toolEvents={msg.toolEvents ?? []}
+                promptEvalCount={msg.promptEvalCount}
+                evalCount={msg.evalCount}
+                modelContextLength={contextLength}
               />
             {/each}
             {#if isGenerating}
@@ -307,6 +417,60 @@
     <!-- Input Area -->
     <ChatInput onsend={handleSend} disabled={isGenerating || models.length === 0} />
   </Card>
+
+  <!-- Right Sidebar (Context & Summary) -->
+  {#if rightSidebarOpen && selectedChatId}
+    <Card class="w-80 hidden lg:flex flex-col shadow-2xl border border-border/50 rounded-xl overflow-hidden bg-card/80 backdrop-blur-xl shrink-0">
+      <header class="flex items-center justify-between p-4 border-b bg-card/50">
+        <h2 class="font-bold text-sm">Chat Context</h2>
+        <button class="text-muted-foreground hover:text-foreground" onclick={() => rightSidebarOpen = false}>✕</button>
+      </header>
+      <ScrollArea class="flex-1 p-4">
+        <div class="space-y-6">
+          <div class="bg-muted/50 rounded-lg p-3 border border-border/40">
+            <h3 class="text-xs font-semibold uppercase tracking-wider mb-3 text-muted-foreground">Memory Mode</h3>
+            <label class="flex items-start gap-3 text-sm cursor-pointer group">
+              <input type="checkbox" checked={currentChat?.use_summary} onchange={toggleSummaryMode} class="mt-1 w-4 h-4 rounded text-primary" />
+              <div class="flex-1">
+                <div class="font-medium group-hover:text-primary transition-colors">Use Summarized History</div>
+                <p class="text-[10px] text-muted-foreground mt-1 leading-relaxed">If checked, the AI will only see the summary below instead of the full message history. This drastically reduces token usage and improves speed for long chats.</p>
+              </div>
+            </label>
+          </div>
+
+          <div>
+            <div class="flex items-center justify-between mb-3">
+              <h3 class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Current Summary</h3>
+              <button class="text-[10px] bg-primary text-primary-foreground font-semibold px-2 py-1 rounded shadow hover:bg-primary/90 transition-colors disabled:opacity-50" onclick={() => summarizeChat(selectedChatId!)} disabled={isSummarizing}>
+                {isSummarizing ? 'Generating...' : 'Regenerate'}
+              </button>
+            </div>
+            
+            <div class="bg-card border rounded-lg p-3">
+              {#if isSummarizing}
+                <div class="text-sm text-muted-foreground animate-pulse flex items-center gap-2">
+                  <div class="w-3 h-3 border-2 border-primary border-t-transparent rounded-full animate-spin"></div>
+                  Analyzing conversation...
+                </div>
+              {:else if currentChat?.summary}
+                <div class="text-sm prose prose-sm dark:prose-invert max-w-none text-foreground/90">
+                  <!-- eslint-disable-next-line svelte/no-at-html-tags -->
+                  {@html currentChat.summary}
+                </div>
+              {:else if summaryText}
+                 <div class="text-sm prose prose-sm dark:prose-invert max-w-none text-foreground/90">
+                  <!-- eslint-disable-next-line svelte/no-at-html-tags -->
+                  {@html summaryText}
+                </div>
+              {:else}
+                <p class="text-sm text-muted-foreground italic">No summary generated yet.</p>
+              {/if}
+            </div>
+          </div>
+        </div>
+      </ScrollArea>
+    </Card>
+  {/if}
 </div>
 
 <!-- Permission Modal (portal-style overlay) -->
