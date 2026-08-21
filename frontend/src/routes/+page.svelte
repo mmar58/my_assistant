@@ -89,6 +89,16 @@
           promptEvalCount: m.prompt_eval_count,
           evalCount: m.eval_count
         }));
+
+        // Find the last assistant message with context counts
+        const lastAsst = [...messages].reverse().find(m => m.promptEvalCount || m.evalCount);
+        if (lastAsst) {
+          lastPromptTokens = lastAsst.promptEvalCount || 0;
+          lastEvalTokens = lastAsst.evalCount || 0;
+        } else {
+          lastPromptTokens = 0;
+          lastEvalTokens = 0;
+        }
         if (currentChat?.use_summary) {
            // We might just show it via the UI, or the backend already sent it as the first message
         }
