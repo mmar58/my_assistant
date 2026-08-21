@@ -18,6 +18,7 @@ import {
   getChatMessages,
   updateChatSummary,
   toggleChatSummaryMode,
+  updateChatConfig,
 } from '../db.js';
 import { createPermissionRequest } from '../permission-store.js';
 
@@ -179,6 +180,45 @@ export async function chatRoutes(fastify: FastifyInstance) {
     }
   });
 
+  fastify.put('/chats/:id/config', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const { system_prompt, tools_enabled } = request.body as { system_prompt: string | null; tools_enabled: boolean };
+    try {
+      await updateChatConfig(id, system_prompt ?? null, tools_enabled ?? true);
+      return { success: true };
+    } catch (error) {
+      fastify.log.error(error);
+      reply.status(500).send({ error: 'Failed to update chat config' });
+    }
+  });
+
+  fastify.post('/system-prompt/suggest', async (request, reply) => {
+    const { current_prompt, model } = request.body as { current_prompt: string; model: string };
+    try {
+      const useModel = model || 'llama3';
+      const response = await ollama.chat({
+        model: useModel,
+        messages: [
+          { role: 'system', content: 'You are an expert AI prompt engineer. Your job is to improve system prompts to make AI assistants more helpful, precise, and effective. When given a system prompt, provide an improved version and briefly explain the key changes you made.' },
+          { role: 'user', content: `Please improve this system prompt. Return ONLY a JSON object with two fields: "improved" (the improved prompt text) and "changes" (a short bulleted list of what you changed).\n\nCurrent prompt:\n${current_prompt || '(empty - create a good general-purpose assistant prompt)'}` }
+        ]
+      });
+      try {
+        const raw = response.message.content.trim();
+        // Try to extract JSON from the response
+        const jsonMatch = raw.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const parsed = JSON.parse(jsonMatch[0]);
+          return { improved: parsed.improved, changes: parsed.changes };
+        }
+      } catch {}
+      return { improved: response.message.content, changes: '' };
+    } catch (error) {
+      fastify.log.error(error);
+      reply.status(500).send({ error: 'Failed to generate suggestion' });
+    }
+  });
+
   // ─── Chat ───────────────────────────────────────────────────────────────────
   fastify.post('/chat', async (request, reply) => {
     let { model, message, chatId } = request.body as { model: string; message: string; chatId?: string };
@@ -242,15 +282,31 @@ export async function chatRoutes(fastify: FastifyInstance) {
         }
       }
 
-      // ── 4. Load history and save user message ─────────────────────────────
+      // ── 4. Load history, system prompt, and save user message ─────────────
       let messages: any[] = [];
+      let chatToolsEnabled = true;
+
       if (!chatId) {
         chatId = await createChat('New Chat', model);
         yield toolEvent({ event: 'chat_created', chatId });
+        // Inject global system prompt for new chats
+        const globalPrompt = await getSetting('system_prompt');
+        if (globalPrompt) {
+          messages.push({ role: 'system', content: globalPrompt });
+        }
       } else {
         await updateChat(chatId, undefined, model);
         const chat = await getChat(chatId);
-        
+        chatToolsEnabled = chat?.tools_enabled !== false; // default true
+
+        // Inject system prompt: per-chat override takes priority over global
+        const chatPrompt = chat?.system_prompt;
+        const globalPrompt = await getSetting('system_prompt');
+        const effectivePrompt = chatPrompt || globalPrompt;
+        if (effectivePrompt) {
+          messages.push({ role: 'system', content: effectivePrompt });
+        }
+
         if (chat?.use_summary && chat.summary) {
           messages.push({ role: 'system', content: `[Conversation History Summary]: ${chat.summary}` });
         } else {
@@ -277,7 +333,7 @@ export async function chatRoutes(fastify: FastifyInstance) {
         const stream = await ollama.chat({
           model,
           messages,
-          tools: modelSupportTools && tools.length > 0 ? tools : undefined,
+          tools: modelSupportTools && chatToolsEnabled && tools.length > 0 ? tools : undefined,
           stream: true,
         });
 

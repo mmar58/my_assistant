@@ -5,7 +5,7 @@
   const TOOLS_API = 'http://localhost:3001/api';
 
   // ── State ────────────────────────────────────────────────────────────────────
-  let activeTab: 'permissions' | 'whitelists' | 'embedding' | 'tools' = $state('permissions');
+  let activeTab: 'permissions' | 'whitelists' | 'embedding' | 'tools' | 'prompt' = $state('prompt');
   let saving = $state(false);
   let saveMsg = $state('');
 
@@ -13,6 +13,11 @@
   let defaultPolicy: string = $state('ask');
   let embeddingModel: string = $state('nomic-embed-text');
   let showToolReason: boolean = $state(true);
+  let systemPrompt: string = $state('');
+
+  // AI Suggestion state
+  let isSuggestLoading = $state(false);
+  let suggestion = $state<{ improved: string; changes: string } | null>(null);
 
   // Ollama models
   let ollamaModels: any[] = $state([]);
@@ -42,6 +47,7 @@
         defaultPolicy = data.default_tool_policy ?? 'ask';
         embeddingModel = data.embedding_model ?? 'nomic-embed-text';
         showToolReason = data.show_tool_reason !== 'false';
+        systemPrompt = data.system_prompt ?? '';
         globalWhitelistDirs = JSON.parse(data.global_whitelist_dirs ?? '[]');
         globalWhitelistCommands = JSON.parse(data.global_whitelist_commands ?? '[]');
       }
@@ -99,6 +105,7 @@
           default_tool_policy: defaultPolicy,
           embedding_model: embeddingModel,
           show_tool_reason: showToolReason ? 'true' : 'false',
+          system_prompt: systemPrompt,
           global_whitelist_dirs: JSON.stringify(globalWhitelistDirs),
           global_whitelist_commands: JSON.stringify(globalWhitelistCommands),
         }),
@@ -182,11 +189,40 @@
   ];
 
   const tabs = [
+    { id: 'prompt', label: 'System Prompt', icon: '🧭' },
     { id: 'permissions', label: 'Tool Policies', icon: '🔐' },
     { id: 'whitelists', label: 'Whitelists', icon: '📁' },
     { id: 'embedding', label: 'Embedding Model', icon: '🧠' },
     { id: 'tools', label: 'All Tools', icon: '🔧' },
   ] as const;
+
+  async function getSuggestion() {
+    isSuggestLoading = true;
+    suggestion = null;
+    try {
+      const model = ollamaModels[0]?.name;
+      if (!model) { saveMsg = 'No model available for AI suggestions'; return; }
+      const res = await fetch(`${API}/system-prompt/suggest`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ current_prompt: systemPrompt, model }),
+      });
+      if (res.ok) {
+        suggestion = await res.json();
+      }
+    } catch {
+      saveMsg = 'AI suggestion failed';
+    } finally {
+      isSuggestLoading = false;
+    }
+  }
+
+  function applySuggestion() {
+    if (suggestion) {
+      systemPrompt = suggestion.improved;
+      suggestion = null;
+    }
+  }
 </script>
 
 <svelte:head>
@@ -229,6 +265,103 @@
 
     <!-- Content -->
     <div class="flex-1 min-w-0">
+
+      <!-- ── Tab: System Prompt ──────────────────────────────────────────────── -->
+      {#if activeTab === 'prompt'}
+        <div class="space-y-6">
+          <div class="flex items-start justify-between">
+            <div>
+              <h2 class="text-xl font-bold">Global System Prompt</h2>
+              <p class="text-sm text-muted-foreground mt-1">Sets the AI's default persona, tone, and instructions for all new chats. Per-chat configs can override this.</p>
+            </div>
+            <div class="flex gap-2 shrink-0">
+              <button
+                class="flex items-center gap-1.5 text-sm font-semibold bg-primary/10 hover:bg-primary/20 text-primary px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50"
+                onclick={getSuggestion}
+                disabled={isSuggestLoading}
+              >
+                {#if isSuggestLoading}
+                  <div class="w-3.5 h-3.5 border-2 border-primary border-t-transparent rounded-full animate-spin"></div>
+                  Generating...
+                {:else}
+                  <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.287 1.288L3 12l5.8 1.9a2 2 0 0 1 1.288 1.287L12 21l1.9-5.8a2 2 0 0 1 1.287-1.288L21 12l-5.8-1.9a2 2 0 0 1-1.288-1.287Z"/></svg>
+                  AI Improve
+                {/if}
+              </button>
+              <button
+                class="text-sm font-semibold bg-primary text-primary-foreground px-4 py-1.5 rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50"
+                onclick={saveGlobalSettings}
+                disabled={saving}
+              >
+                {saving ? 'Saving...' : 'Save'}
+              </button>
+            </div>
+          </div>
+
+          <!-- Tips Panel -->
+          <div class="rounded-xl border border-blue-500/20 bg-blue-500/5 p-4 grid grid-cols-2 gap-3 text-xs text-blue-300/80">
+            <div class="space-y-1.5">
+              <p class="font-semibold text-blue-400 text-[11px] uppercase tracking-wider">✦ Tips for a great prompt</p>
+              <p>• Define the AI's role clearly: "You are a senior software engineer..."</p>
+              <p>• Set the response tone: concise, detailed, friendly, formal</p>
+              <p>• Specify what NOT to do: "Never make up information"</p>
+            </div>
+            <div class="space-y-1.5">
+              <p class="font-semibold text-blue-400 text-[11px] uppercase tracking-wider">✦ Useful patterns</p>
+              <p>• Add output format guidelines: "Use markdown for code"</p>
+              <p>• Inject context: timezone, language preference, project stack</p>
+              <p>• Use "AI Improve" to let the model refine your prompt</p>
+            </div>
+          </div>
+
+          <!-- Prompt Editor -->
+          <div class="relative">
+            <textarea
+              bind:value={systemPrompt}
+              rows="18"
+              placeholder="You are a helpful AI assistant. Be concise, accurate, and always think step by step..."
+              class="w-full rounded-xl border border-border/50 bg-card/60 px-4 py-3 text-sm font-mono resize-y focus:outline-none focus:ring-2 focus:ring-primary/50 placeholder:text-muted-foreground/40 transition-shadow min-h-[200px]"
+            ></textarea>
+            <div class="absolute bottom-3 right-3 text-[10px] text-muted-foreground/40">
+              {systemPrompt.length} chars
+            </div>
+          </div>
+
+          <!-- AI Suggestion Result -->
+          {#if suggestion}
+            <div class="rounded-xl border border-primary/30 bg-primary/5 p-5 space-y-4">
+              <div class="flex items-center justify-between">
+                <p class="font-semibold text-primary flex items-center gap-2">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.287 1.288L3 12l5.8 1.9a2 2 0 0 1 1.288 1.287L12 21l1.9-5.8a2 2 0 0 1 1.287-1.288L21 12l-5.8-1.9a2 2 0 0 1-1.288-1.287Z"/></svg>
+                  AI Improvement Suggestion
+                </p>
+                <button class="text-xs text-muted-foreground hover:text-foreground" onclick={() => suggestion = null}>✕ Dismiss</button>
+              </div>
+              {#if suggestion.changes}
+                <div class="text-xs text-muted-foreground bg-muted/60 rounded-lg p-3 whitespace-pre-line border border-border/40">
+                  <p class="font-semibold mb-1 text-foreground/70">What changed:</p>
+                  {suggestion.changes}
+                </div>
+              {/if}
+              <div class="text-sm font-mono text-foreground/80 bg-background rounded-lg p-4 max-h-64 overflow-y-auto border border-border/40 whitespace-pre-wrap">{suggestion.improved}</div>
+              <div class="flex gap-3">
+                <button
+                  class="flex-1 text-sm font-semibold bg-primary text-primary-foreground py-2 rounded-lg hover:bg-primary/90 transition-colors"
+                  onclick={applySuggestion}
+                >
+                  Apply Suggestion
+                </button>
+                <button
+                  class="flex-1 text-sm font-medium border border-border/60 py-2 rounded-lg hover:bg-muted transition-colors"
+                  onclick={() => suggestion = null}
+                >
+                  Keep Current
+                </button>
+              </div>
+            </div>
+          {/if}
+        </div>
+      {/if}
 
       <!-- ── Tab: Tool Policies ─────────────────────────────────────────────── -->
       {#if activeTab === 'permissions'}

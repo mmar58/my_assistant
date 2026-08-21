@@ -158,14 +158,14 @@ export async function createChat(title: string, model: string): Promise<string> 
 
 export async function getChats(): Promise<any[]> {
   const result = await pool.query(
-    `SELECT id, title, last_model, summary, use_summary, created_at, updated_at FROM chats ORDER BY updated_at DESC`
+    `SELECT id, title, last_model, summary, use_summary, system_prompt, tools_enabled, created_at, updated_at FROM chats ORDER BY updated_at DESC`
   );
   return result.rows;
 }
 
 export async function getChat(id: string): Promise<any | null> {
   const result = await pool.query(
-    `SELECT id, title, last_model, summary, use_summary, created_at, updated_at FROM chats WHERE id = $1`,
+    `SELECT id, title, last_model, summary, use_summary, system_prompt, tools_enabled, created_at, updated_at FROM chats WHERE id = $1`,
     [id]
   );
   return result.rows[0] ?? null;
@@ -190,6 +190,17 @@ export async function updateChatSummary(id: string, summary: string): Promise<vo
 
 export async function toggleChatSummaryMode(id: string, useSummary: boolean): Promise<void> {
   await pool.query(`UPDATE chats SET use_summary = $1, updated_at = NOW() WHERE id = $2`, [useSummary, id]);
+}
+
+export async function updateChatConfig(
+  id: string,
+  systemPrompt: string | null,
+  toolsEnabled: boolean
+): Promise<void> {
+  await pool.query(
+    `UPDATE chats SET system_prompt = $1, tools_enabled = $2, updated_at = NOW() WHERE id = $3`,
+    [systemPrompt, toolsEnabled, id]
+  );
 }
 
 export async function deleteChat(id: string): Promise<void> {

@@ -4,6 +4,7 @@
   import ChatBubble from '$lib/components/ChatBubble.svelte';
   import ChatInput from '$lib/components/ChatInput.svelte';
   import ToolPermissionModal from '$lib/components/ToolPermissionModal.svelte';
+  import ChatConfigPanel from '$lib/components/ChatConfigPanel.svelte';
   import { ScrollArea } from '$lib/components/ui/scroll-area';
   import { Card } from '$lib/components/ui/card';
 
@@ -38,10 +39,17 @@
   let rightSidebarOpen = $state(false);
   let summaryText = $state('');
   let isSummarizing = $state(false);
-  let activeMenuId = $state<string | null>(null); // For sidebar dropdowns
+  let activeMenuId = $state<string | null>(null);
+  let chatConfigOpen = $state(false);
+
+  // Token tracking — updated from last message's eval counts
+  let lastPromptTokens = $state(0);
+  let lastEvalTokens = $state(0);
 
   let currentChat = $derived(chats.find(c => c.id === selectedChatId));
   let contextLength = $derived(models.find(m => m.name === selectedModel)?.details?.context_length ?? 8192);
+  let totalUsedTokens = $derived(lastPromptTokens + lastEvalTokens);
+  let tokenPct = $derived(Math.min(100, Math.round((totalUsedTokens / contextLength) * 100)));
 
   onMount(async () => {
     try {
@@ -94,6 +102,9 @@
     selectedChatId = null;
     messages = [];
     rightSidebarOpen = false;
+    chatConfigOpen = false;
+    lastPromptTokens = 0;
+    lastEvalTokens = 0;
   }
 
   const scrollToBottom = () => {
@@ -181,6 +192,9 @@
                 const prev = messages[assistantIdx];
                 messages[assistantIdx] = { ...prev, promptEvalCount: parsed.prompt, evalCount: parsed.eval };
                 messages = [...messages];
+                // Update header token meter
+                if (parsed.prompt) lastPromptTokens = parsed.prompt;
+                if (parsed.eval) lastEvalTokens = parsed.eval;
 
               } else if (parsed.type === 'tool_event') {
                 if (parsed.event === 'chat_created') {
@@ -353,19 +367,52 @@
   <Card class="flex-1 h-full flex flex-col shadow-2xl border border-border/50 rounded-xl overflow-hidden bg-card/80 backdrop-blur-xl">
 
     <!-- Header -->
-    <header class="flex items-center justify-between p-4 border-b bg-card/50 shrink-0">
-      <div class="flex flex-col">
+    <header class="flex items-center justify-between p-4 border-b bg-card/50 shrink-0 gap-3">
+      <div class="flex flex-col shrink-0">
         <h1 class="text-xl font-bold bg-linear-to-r from-primary to-blue-500 bg-clip-text text-transparent">
           AI Assistant
         </h1>
         <p class="text-xs text-muted-foreground">Powered by Ollama + pgvector</p>
       </div>
 
-      <div class="flex items-center gap-3">
+      <!-- Token Meter (shows when a chat is active & tokens available) -->
+      {#if selectedChatId && totalUsedTokens > 0}
+        <div class="flex-1 min-w-0 max-w-xs group/meter relative">
+          <div class="flex items-center justify-between text-[10px] text-muted-foreground mb-1">
+            <span class="font-medium">{totalUsedTokens.toLocaleString()} tokens used</span>
+            <span class="{tokenPct > 80 ? 'text-red-500' : tokenPct > 50 ? 'text-yellow-500' : 'text-green-500'} font-semibold">{100 - tokenPct}% free</span>
+          </div>
+          <div class="h-1.5 w-full bg-muted rounded-full overflow-hidden">
+            <div
+              class="h-full rounded-full transition-all duration-700 {tokenPct > 80 ? 'bg-red-500' : tokenPct > 50 ? 'bg-yellow-500' : 'bg-primary'}"
+              style="width: {tokenPct}%"
+            ></div>
+          </div>
+          <!-- Tooltip -->
+          <div class="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 opacity-0 group-hover/meter:opacity-100 transition-opacity bg-popover text-popover-foreground text-[10px] px-3 py-2 rounded-lg shadow-lg border whitespace-nowrap pointer-events-none z-10 flex flex-col items-center gap-0.5">
+            <span class="font-semibold text-xs">{tokenPct}% Context Used</span>
+            <span class="opacity-70">Prompt: {lastPromptTokens.toLocaleString()} • Response: {lastEvalTokens.toLocaleString()}</span>
+            <span class="opacity-70">Remaining: {(contextLength - totalUsedTokens).toLocaleString()} / {contextLength.toLocaleString()} total</span>
+          </div>
+        </div>
+      {/if}
+
+      <div class="flex items-center gap-2 shrink-0">
         {#if models.length > 0}
           <ModelSelector bind:models bind:selectedModel />
         {:else}
           <div class="text-sm text-muted-foreground animate-pulse">Loading models...</div>
+        {/if}
+
+        <!-- Per-chat config (only when a chat is active) -->
+        {#if selectedChatId}
+          <button
+            class="p-2 rounded-lg border border-border/60 bg-muted/40 hover:bg-primary/10 hover:border-primary/40 hover:text-primary text-muted-foreground transition-colors {chatConfigOpen ? 'bg-primary/10 border-primary/40 text-primary' : ''}"
+            title="Chat Config"
+            onclick={() => chatConfigOpen = !chatConfigOpen}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+          </button>
         {/if}
 
         <a
@@ -489,5 +536,15 @@
     reason={pendingPermission.reason}
     args={pendingPermission.args}
     onRespond={handlePermissionResponse}
+  />
+{/if}
+
+<!-- Chat Config Panel -->
+{#if chatConfigOpen && currentChat}
+  <ChatConfigPanel
+    chat={currentChat}
+    selectedModel={selectedModel}
+    onClose={() => chatConfigOpen = false}
+    onSave={() => loadChats()}
   />
 {/if}
