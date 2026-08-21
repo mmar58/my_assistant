@@ -316,25 +316,33 @@
     <ScrollArea class="flex-1 p-2">
       <div class="flex flex-col gap-1">
         {#each chats as chat}
-          <div class="relative chat-menu-container">
+          <div class="relative group">
             <button 
-              class="w-full text-left px-3 py-2 rounded-lg text-sm transition-colors pr-8 {selectedChatId === chat.id ? 'bg-muted font-medium' : 'hover:bg-muted/50 text-muted-foreground'}"
+              class="w-full text-left px-3 py-2 rounded-lg text-sm transition-colors {selectedChatId === chat.id ? 'bg-muted font-medium' : 'hover:bg-muted/50 text-muted-foreground'}"
               onclick={() => selectChat(chat.id)}
             >
-              <div class="truncate">{chat.title}</div>
+              <div class="truncate pr-24">{chat.title}</div>
               <div class="text-[10px] text-muted-foreground/60">{new Date(chat.updated_at).toLocaleDateString()}</div>
             </button>
-            <button class="absolute right-2 top-2 p-1 text-muted-foreground hover:text-foreground opacity-50 hover:opacity-100" onclick={() => activeMenuId = activeMenuId === chat.id ? null : chat.id}>
-              ⋮
-            </button>
-            {#if activeMenuId === chat.id}
-              <div class="absolute top-8 right-2 w-40 bg-popover text-popover-foreground rounded-lg shadow-xl border overflow-hidden z-50 text-sm">
-                <button class="w-full text-left px-3 py-2 hover:bg-muted" onclick={() => renameChat(chat.id)}>Rename</button>
-                <button class="w-full text-left px-3 py-2 hover:bg-muted flex items-center justify-between" onclick={() => autoRenameChat(chat.id)}>Auto-Rename <span class="text-[10px] bg-primary/20 text-primary px-1 rounded font-bold tracking-wider">AI</span></button>
-                <button class="w-full text-left px-3 py-2 hover:bg-muted" onclick={() => summarizeChat(chat.id)}>Summarize</button>
-                <button class="w-full text-left px-3 py-2 hover:bg-red-500/10 text-red-500 border-t" onclick={() => deleteChat(chat.id)}>Delete</button>
-              </div>
-            {/if}
+            
+            <div class="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity bg-background/80 backdrop-blur-sm p-1 rounded-md shadow-sm border">
+              <!-- Rename -->
+              <button class="p-1 rounded hover:bg-muted-foreground/20 text-muted-foreground hover:text-foreground transition-colors" title="Rename" onclick={(e) => { e.stopPropagation(); renameChat(chat.id); }}>
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+              </button>
+              <!-- Auto Rename -->
+              <button class="p-1 rounded hover:bg-primary/20 text-muted-foreground hover:text-primary transition-colors" title="Auto-Rename (AI)" onclick={(e) => { e.stopPropagation(); autoRenameChat(chat.id); }}>
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.287 1.288L3 12l5.8 1.9a2 2 0 0 1 1.288 1.287L12 21l1.9-5.8a2 2 0 0 1 1.287-1.288L21 12l-5.8-1.9a2 2 0 0 1-1.288-1.287Z"/></svg>
+              </button>
+              <!-- Summarize -->
+              <button class="p-1 rounded hover:bg-muted-foreground/20 text-muted-foreground hover:text-foreground transition-colors" title="Summarize" onclick={(e) => { e.stopPropagation(); summarizeChat(chat.id); }}>
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12h20"/><path d="M20 12v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-8"/><path d="m4 8 8-4 8 4"/></svg>
+              </button>
+              <!-- Delete -->
+              <button class="p-1 rounded hover:bg-red-500/20 text-muted-foreground hover:text-red-500 transition-colors" title="Delete" onclick={(e) => { e.stopPropagation(); deleteChat(chat.id); }}>
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+              </button>
+            </div>
           </div>
         {/each}
       </div>

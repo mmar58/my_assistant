@@ -11,7 +11,10 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim())
   : true;
 
-fastify.register(cors, { origin: allowedOrigins });
+fastify.register(cors, { 
+  origin: allowedOrigins,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS']
+});
 fastify.register(chatRoutes, { prefix: '/api' });
 fastify.register(settingsRoutes, { prefix: '/api' });
 
